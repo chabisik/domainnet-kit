@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domainnet"
+version = "0.1.0"
+description = "Dependency-free framework to simulate and visualize domains that exchange messages and host their own services"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+domainnet = "domainnet.__main__:main"
+
+[tool.setuptools]
+packages = ["domainnet"]
+
+[tool.setuptools.package-data]
+domainnet = ["static/*.html"]

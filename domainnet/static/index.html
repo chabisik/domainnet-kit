@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>domainnet</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0e1319; --panel: #151c25; --panel2: #1b2430; --line: #2a3644; --text: #dbe4ee;
+    --muted: #8696a8; --accent: #4fd1c5; --req: #63b3ed; --rep: #68d391; --evt: #f6ad55;
+    --bad: #fc8181; --warn: #f6e05e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 8px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .3px; }
+  header h1 span { color: var(--accent); }
+  .group { display: flex; align-items: center; gap: 6px; }
+  .stats { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--muted); }
+  .chip b { color: var(--text); font-variant-numeric: tabular-nums; }
+  button, select, input { font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; }
+  input { min-width: 0; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #164e4a; border-color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label.sw { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+  #conn { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  #conn.ok { background: var(--rep); }
+  main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+  #stage { position: relative; min-width: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 12px; color: var(--muted);
+    background: rgba(14,19,25,.75); padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); }
+  #legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  #empty { position: absolute; inset: 0; display: none; place-items: center; text-align: center;
+    color: var(--muted); pointer-events: none; }
+  aside { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); }
+  aside section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  aside h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  #selected { overflow: auto; max-height: 46%; }
+  .row { display: flex; gap: 6px; margin: 5px 0; align-items: center; flex-wrap: wrap; }
+  .row > select, .row > input { flex: 1; min-width: 70px; }
+  .row .lbl { width: 54px; color: var(--muted); }
+  .tag { display: inline-flex; align-items: center; gap: 4px; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 1px 4px 1px 8px; }
+  .tag button { border: 0; background: none; padding: 0 4px; color: var(--muted); }
+  .tag button:hover { color: var(--bad); }
+  .muted { color: var(--muted); }
+  #console { display: flex; flex-direction: column; gap: 6px; }
+  #out { max-height: 90px; overflow: auto; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+  #out .err { color: var(--bad); } #out .ok { color: var(--rep); }
+  #logwrap { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 0; }
+  #log { flex: 1; overflow: auto; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  #log div { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .k-struct { color: var(--accent); } .k-drop { color: var(--bad); } .k-deliv { color: var(--rep); } .k-sent { color: var(--req); } .k-err { color: var(--warn); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } aside { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>domain<span>net</span></h1>
+    <div class="stats">
+      <span class="chip">domains <b id="s-dom">0</b></span>
+      <span class="chip">links <b id="s-lnk">0</b></span>
+      <span class="chip">services <b id="s-svc">0</b></span>
+      <span class="chip">in flight <b id="s-fly">0</b></span>
+      <span class="chip">delivered <b id="s-del">0</b></span>
+      <span class="chip">dropped <b id="s-drp">0</b></span>
+    </div>
+    <div class="group">
+      <input id="newname" placeholder="name (optional)" size="14" aria-label="New domain name">
+      <button id="btn-add">+ Domain</button>
+    </div>
+    <div class="group">
+      <button id="btn-pause">Pause</button>
+      <label class="sw">speed
+        <select id="speed" aria-label="Speed">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+          <option value="2">2×</option><option value="4">4×</option>
+        </select>
+      </label>
+    </div>
+    <div class="group">
+      <label class="sw"><input type="checkbox" id="traffic"> traffic</label>
+      <input id="rate" type="number" min="0.1" max="30" step="0.5" value="2" size="3" style="width:58px" aria-label="Messages per second">
+      <span class="muted">msg/s</span>
+    </div>
+    <div class="group">
+      <label class="sw"><input type="checkbox" id="churn"> churn</label>
+      <span class="muted">random domains/links/services</span>
+    </div>
+    <div class="group"><button id="btn-reset" class="danger">Reset</button></div>
+    <div class="group" style="margin-left:auto"><span id="conn" title="stream connection"></span><span class="muted" id="connlbl">connecting…</span></div>
+  </header>
+  <main>
+    <div id="stage">
+      <canvas id="cv"></canvas>
+      <div id="empty"><div><div style="font-size:16px;color:var(--text)">No domains yet</div>
+        <div>Click “+ Domain”, type <code>add</code> in the console, or turn on <b>churn</b>.</div></div></div>
+      <div id="legend">
+        <span><i style="background:var(--req)"></i>request</span>
+        <span><i style="background:var(--rep)"></i>reply</span>
+        <span><i style="background:var(--evt)"></i>event</span>
+        <span><i style="background:var(--bad)"></i>dropped</span>
+      </div>
+    </div>
+    <aside>
+      <section id="selected"><h2>Selected domain</h2><div id="selbody" class="muted">Click a domain in the graph. Drag to move it.</div></section>
+      <section id="console">
+        <h2>Console <span class="muted" style="text-transform:none;letter-spacing:0">— type <code>help</code></span></h2>
+        <input id="cmd" placeholder="link alpha bravo 120" autocomplete="off" spellcheck="false" aria-label="Console command">
+        <div id="out"></div>
+      </section>
+      <section id="logwrap"><h2>Events</h2><div id="log"></div></section>
+    </aside>
+  </main>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- state
+let S = { domains: [], links: [], templates: [], stats: {}, speed: 1, paused: false,
+          traffic: { running: false, rate: 2 }, churn: { running: false } };
+const nodes = new Map();      // name -> view node
+const linkViews = new Map();  // "a|b" -> view link
+const ghosts = [];            // fading removed nodes
+const ghostLinks = [];        // fading removed links
+const packets = [];           // in-flight animated packets
+const marks = [];             // drop markers
+let clock = 0;                // animation clock (ms) - frozen while paused
+let selected = null;
+let sigPanel = "";
+
+const COLORS = { request: "#63b3ed", reply: "#68d391", event: "#f6ad55", drop: "#fc8181", accent: "#4fd1c5" };
+const $ = (id) => document.getElementById(id);
+const lk = (a, b) => (a < b ? a + "|" + b : b + "|" + a);
+
+// ---------------------------------------------------------------- api
+async function post(body) {
+  try {
+    const r = await fetch("/api/command", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return await r.json();
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
+const cmd = (o) => post(o).then((r) => { if (!r.ok) flashOut(r.error, true); return r; });
+function flashOut(text, err) {
+  const out = $("out"), d = document.createElement("div");
+  d.className = err ? "err" : "ok"; d.textContent = text;
+  out.appendChild(d); while (out.childElementCount > 40) out.firstChild.remove(); out.scrollTop = out.scrollHeight;
+}
+
+// ------------------------------------------------------------- reconcile
+function applyState(st) {
+  S = st;
+  const names = new Set(st.domains.map((d) => d.name));
+  // removed domains -> ghosts
+  for (const [name, n] of nodes) if (!names.has(name)) {
+    ghosts.push({ x: n.x, y: n.y, name, t0: clock }); nodes.delete(name);
+    if (selected === name) selected = null;
+  }
+  // added domains
+  for (const d of st.domains) {
+    let n = nodes.get(d.name);
+    if (!n) {
+      const w = cv.clientWidth, h = cv.clientHeight;
+      const near = st.links.filter((l) => l.a === d.name || l.b === d.name).map((l) => nodes.get(l.a === d.name ? l.b : l.a)).filter(Boolean);
+      let x = w / 2 + (Math.random() - .5) * 120, y = h / 2 + (Math.random() - .5) * 120;
+      if (near.length) { x = near.reduce((s, m) => s + m.x, 0) / near.length + (Math.random() - .5) * 60; y = near.reduce((s, m) => s + m.y, 0) / near.length + (Math.random() - .5) * 60; }
+      n = { name: d.name, x, y, vx: 0, vy: 0, born: clock, pinned: false, pulse: -1e9, flash: {} };
+      nodes.set(d.name, n);
+    }
+    n.info = d;
+  }
+  // links
+  const keys = new Set(st.links.map((l) => lk(l.a, l.b)));
+  for (const [k, v] of linkViews) if (!keys.has(k)) { ghostLinks.push({ a: v.a, b: v.b, t0: clock }); linkViews.delete(k); }
+  for (const l of st.links) {
+    const k = lk(l.a, l.b); let v = linkViews.get(k);
+    if (!v) { v = { a: l.a, b: l.b, born: clock, activity: 0 }; linkViews.set(k, v); }
+    v.latency = l.latency_ms; v.loss = l.loss;
+  }
+  // header
+  const stt = st.stats || {};
+  $("s-dom").textContent = st.domains.length; $("s-lnk").textContent = st.links.length;
+  $("s-svc").textContent = st.domains.reduce((s, d) => s + d.services.length, 0);
+  $("s-fly").textContent = Math.max(0, stt.in_flight || 0); $("s-del").textContent = stt.delivered || 0; $("s-drp").textContent = stt.dropped || 0;
+  $("btn-pause").textContent = st.paused ? "Resume" : "Pause"; $("btn-pause").classList.toggle("on", st.paused);
+  $("speed").value = String(st.speed);
+  if (document.activeElement !== $("rate")) $("rate").value = st.traffic.rate;
+  $("traffic").checked = !!st.traffic.running; $("churn").checked = !!st.churn.running;
+  $("empty").style.display = st.domains.length ? "none" : "grid";
+  renderPanel();
+}
+let refreshTimer = null;
+function refresh(soon) {
+  if (soon) { if (refreshTimer) return; refreshTimer = setTimeout(() => { refreshTimer = null; refresh(false); }, 60); return; }
+  fetch("/api/state").then((r) => r.json()).then(applyState).catch(() => {});
+}
+
+// --------------------------------------------------------------- stream
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => { $("conn").className = "ok"; $("connlbl").textContent = "live"; };
+  es.onerror = () => { $("conn").className = ""; $("connlbl").textContent = "reconnecting…"; };
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "snapshot") { applyState(ev.state); return; }
+    onEvent(ev);
+  };
+}
+function nodePos(name) { const n = nodes.get(name); return n ? n : null; }
+function onEvent(ev) {
+  const d = ev.data, t = ev.type;
+  if (t.startsWith("domain.") || t.startsWith("link.") || t.startsWith("service.deployed") || t.startsWith("service.removed")) refresh(true);
+  if (t === "net.paused") { S.paused = d.paused; $("btn-pause").textContent = d.paused ? "Resume" : "Pause"; $("btn-pause").classList.toggle("on", d.paused); }
+  if (t === "net.speed") $("speed").value = String(d.speed);
+  if (t === "message.hop") {
+    packets.push({ from: d.frm, to: d.to, t0: clock, dur: Math.max(60, d.duration_ms), kind: d.kind });
+    const v = linkViews.get(lk(d.frm, d.to)); if (v) v.activity = 1;
+  } else if (t === "message.delivered") {
+    const n = nodes.get(d.domain); if (n) { n.pulse = clock; if (d.service) n.flash[d.service] = clock; }
+  } else if (t === "message.dropped") {
+    const n = nodePos(d.at) || nodePos(d.near);
+    if (n) marks.push({ x: n.x, y: n.y - 4, t0: clock });
+  } else if (t === "service.error") {
+    const n = nodes.get(d.domain); if (n) n.flash["!" + d.service] = clock;
+  }
+  logEvent(ev);
+}
+function logEvent(ev) {
+  const d = ev.data, t = ev.type; let text = null, cls = "";
+  const hm = new Date(ev.ts * 1000).toTimeString().slice(0, 8);
+  if (t === "message.hop" || t === "net.speed") return;
+  if (t === "message.sent") { text = `${d.src} → ${d.dst}${d.service ? "/" + d.service : ""} ${d.kind === "request" ? "" : "(" + d.kind + ") "}${d.preview}`; cls = "k-sent"; }
+  else if (t === "message.delivered") { text = `✓ ${d.domain}${d.service ? "/" + d.service : ""} ${d.hops} hop${d.hops === 1 ? "" : "s"} ${Math.round(d.latency_ms)}ms`; cls = "k-deliv"; }
+  else if (t === "message.dropped") { text = `✗ drop ${d.src}→${d.dst} (${d.reason})`; cls = "k-drop"; }
+  else if (t === "service.error") { text = `! ${d.domain}/${d.service}: ${d.error}`; cls = "k-err"; }
+  else if (t === "net.paused") { text = d.paused ? "paused" : "resumed"; cls = "k-struct"; }
+  else { text = `${t} ${Object.entries(d).filter(([k]) => ["name", "a", "b", "domain", "service", "reason"].includes(k)).map(([, v]) => v).join(" ")}`; cls = "k-struct"; }
+  const log = $("log"), row = document.createElement("div");
+  row.className = cls; row.textContent = `${hm}  ${text}`; row.title = row.textContent;
+  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+  log.appendChild(row); while (log.childElementCount > 160) log.firstChild.remove();
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+// ------------------------------------------------------------ side panel
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) { if (k === "on") for (const [ev, fn] of Object.entries(v)) e.addEventListener(ev, fn); else if (k === "class") e.className = v; else e.setAttribute(k, v); }
+  for (const kid of kids) e.append(kid);
+  return e;
+}
+function renderPanel(force) {
+  const body = $("selbody");
+  const d = selected && S.domains.find((x) => x.name === selected);
+  const sig = JSON.stringify([selected, d && d.services.map((s) => s.name), S.domains.map((x) => x.name + ":" + x.services.map((s) => s.name)), S.links.map((l) => lk(l.a, l.b) + l.latency), S.templates.map((t) => t.name)]);
+  if (!force && sig === sigPanel) return; sigPanel = sig;
+  body.className = ""; body.replaceChildren();
+  if (!d) { body.className = "muted"; body.textContent = "Click a domain in the graph. Drag to move it."; return; }
+  body.append(el("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px" }, d.name));
+  // services
+  const svcRow = el("div", { class: "row" }, el("span", { class: "lbl" }, "services"));
+  if (!d.services.length) svcRow.append(el("span", { class: "muted" }, "none"));
+  for (const s of d.services) svcRow.append(el("span", { class: "tag", title: s.description }, s.name,
+    el("button", { title: "undeploy", "aria-label": "undeploy " + s.name, on: { click: () => cmd({ cmd: "undeploy", domain: d.name, service: s.name }) } }, "×")));
+  body.append(svcRow);
+  // deploy
+  const tsel = el("select", { "aria-label": "Template" }, ...S.templates.map((t) => el("option", { value: t.name, title: t.description }, t.name)));
+  const sname = el("input", { placeholder: "as (optional)", "aria-label": "Service name" });
+  body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "deploy"), tsel, sname,
+    el("button", { on: { click: () => cmd({ cmd: "deploy", domain: d.name, template: tsel.value, service: sname.value.trim() }) } }, "Deploy")));
+  // links
+  const nbs = S.links.filter((l) => l.a === d.name || l.b === d.name);
+  const lrow = el("div", { class: "row" }, el("span", { class: "lbl" }, "links"));
+  if (!nbs.length) lrow.append(el("span", { class: "muted" }, "none"));
+  for (const l of nbs) { const o = l.a === d.name ? l.b : l.a;
+    lrow.append(el("span", { class: "tag", title: `${l.latency_ms} ms, loss ${l.loss}` }, `${o} · ${Math.round(l.latency_ms)}ms`,
+      el("button", { title: "unlink", "aria-label": "unlink " + o, on: { click: () => cmd({ cmd: "unlink", a: d.name, b: o }) } }, "×"))); }
+  body.append(lrow);
+  const others = S.domains.filter((x) => x.name !== d.name);
+  const lsel = el("select", { "aria-label": "Link to" }, ...others.map((x) => el("option", { value: x.name }, x.name)));
+  const lat = el("input", { type: "number", value: "150", min: "0", style: "max-width:64px", "aria-label": "Latency ms" });
+  const loss = el("input", { type: "number", value: "0", min: "0", max: "1", step: "0.05", style: "max-width:56px", "aria-label": "Loss 0-1", title: "loss 0..1" });
+  body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "link to"), lsel, lat, loss,
+    el("button", { on: { click: () => lsel.value && cmd({ cmd: "link", a: d.name, b: lsel.value, latency_ms: +lat.value, loss: +loss.value }) } }, "Link")));
+  // send
+  const targets = [];
+  for (const x of S.domains) { targets.push(x.name); for (const s of x.services) targets.push(x.name + "/" + s.name); }
+  const tg = el("select", { "aria-label": "Send to" }, ...targets.filter((t) => t !== d.name).map((t) => el("option", { value: t }, t)));
+  const pl = el("input", { placeholder: "payload", value: "hello", "aria-label": "Payload" });
+  body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "send"), tg, pl,
+    el("button", { on: { click: () => tg.value && cmd({ cmd: "send", src: d.name, target: tg.value, payload: pl.value }) } }, "Send")));
+  body.append(el("div", { class: "row" }, el("button", { class: "danger", on: { click: () => cmd({ cmd: "remove_domain", name: d.name }) } }, "Remove domain")));
+}
+
+// ------------------------------------------------------------- controls
+$("btn-add").onclick = () => { const n = $("newname").value.trim(); cmd(n ? { cmd: "add_domain", name: n } : { cmd: "add_domain" }); $("newname").value = ""; };
+$("newname").onkeydown = (e) => { if (e.key === "Enter") $("btn-add").click(); };
+$("btn-pause").onclick = () => cmd({ cmd: S.paused ? "resume" : "pause" });
+$("speed").onchange = (e) => cmd({ cmd: "speed", value: +e.target.value });
+$("traffic").onchange = (e) => cmd({ cmd: "traffic", on: e.target.checked, rate: +$("rate").value });
+$("rate").onchange = () => cmd({ cmd: "traffic", rate: +$("rate").value });
+$("churn").onchange = (e) => cmd({ cmd: "churn", on: e.target.checked });
+$("btn-reset").onclick = () => { if (confirm("Remove all domains?")) cmd({ cmd: "reset" }); };
+const hist = []; let hi = 0;
+$("cmd").onkeydown = async (e) => {
+  const inp = e.target;
+  if (e.key === "Enter" && inp.value.trim()) {
+    const line = inp.value.trim(); hist.push(line); hi = hist.length; inp.value = "";
+    flashOut("> " + line, false);
+    const r = await post({ line });
+    if (!r.ok) flashOut(r.error, true);
+    else if (r.result !== undefined) flashOut(typeof r.result === "string" ? r.result : JSON.stringify(r.result), false);
+  } else if (e.key === "ArrowUp") { if (hi > 0) inp.value = hist[--hi]; e.preventDefault(); }
+  else if (e.key === "ArrowDown") { inp.value = hi < hist.length - 1 ? hist[++hi] : (hi = hist.length, ""); e.preventDefault(); }
+};
+
+// --------------------------------------------------------------- canvas
+const cv = $("cv"), ctx = cv.getContext("2d");
+let W = 0, H = 0, dpr = 1;
+function resize() { dpr = window.devicePixelRatio || 1; W = cv.clientWidth; H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+new ResizeObserver(resize).observe(cv); resize();
+
+const R = 30;
+function physics(dt) {
+  const list = [...nodes.values()];
+  for (const a of list) { a.ax = (W / 2 - a.x) * 0.012; a.ay = (H / 2 - a.y) * 0.012; }
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const a = list[i], b = list[j]; let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 1; const d = Math.sqrt(d2);
+    const f = 48000 / d2; dx /= d; dy /= d; a.ax += dx * f; a.ay += dy * f; b.ax -= dx * f; b.ay -= dy * f;
+  }
+  for (const v of linkViews.values()) {
+    const a = nodes.get(v.a), b = nodes.get(v.b); if (!a || !b) continue;
+    let dx = b.x - a.x, dy = b.y - a.y; const d = Math.sqrt(dx * dx + dy * dy) || 1; dx /= d; dy /= d;
+    const rest = 190 + Math.min(120, (v.latency || 150) * 0.4), f = (d - rest) * 0.03;
+    a.ax += dx * f; a.ay += dy * f; b.ax -= dx * f; b.ay -= dy * f;
+  }
+  const k = Math.min(dt, 50) / 16;
+  for (const n of list) {
+    if (n.pinned) { n.vx = n.vy = 0; continue; }
+    n.vx = (n.vx + n.ax * k) * 0.82; n.vy = (n.vy + n.ay * k) * 0.82;
+    const sp = Math.hypot(n.vx, n.vy); if (sp > 14) { n.vx *= 14 / sp; n.vy *= 14 / sp; }
+    n.x = Math.min(W - 60, Math.max(60, n.x + n.vx * k)); n.y = Math.min(H - 70, Math.max(50, n.y + n.vy * k));
+  }
+}
+const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  // ghost links
+  for (let i = ghostLinks.length - 1; i >= 0; i--) {
+    const g = ghostLinks[i], a = nodes.get(g.a) || ghosts.find((x) => x.name === g.a), b = nodes.get(g.b) || ghosts.find((x) => x.name === g.b), t = (clock - g.t0) / 700;
+    if (t >= 1 || !a || !b) { ghostLinks.splice(i, 1); continue; }
+    ctx.save(); ctx.globalAlpha = 1 - t; ctx.setLineDash([6, 6]); ctx.strokeStyle = COLORS.drop; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore();
+  }
+  // links
+  for (const v of linkViews.values()) {
+    const a = nodes.get(v.a), b = nodes.get(v.b); if (!a || !b) continue;
+    const grow = ease((clock - v.born) / 450); v.activity = Math.max(0, v.activity - 0.02);
+    ctx.save(); ctx.lineWidth = 1.5 + v.activity * 2.5; ctx.strokeStyle = v.activity > 0.05 ? `rgba(79,209,197,${0.35 + v.activity * 0.5})` : "#34475a";
+    if (v.loss > 0) ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + (b.x - a.x) * grow, a.y + (b.y - a.y) * grow); ctx.stroke(); ctx.restore();
+    if (grow >= 1) { ctx.fillStyle = "#5d7288"; ctx.font = "10px system-ui"; ctx.textAlign = "center"; ctx.fillText(Math.round(v.latency) + "ms", (a.x + b.x) / 2, (a.y + b.y) / 2 - 5); }
+  }
+  // ghost nodes
+  for (let i = ghosts.length - 1; i >= 0; i--) {
+    const g = ghosts[i], t = (clock - g.t0) / 700; if (t >= 1) { ghosts.splice(i, 1); continue; }
+    ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = COLORS.drop; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(g.x, g.y, R * (1 + t * 0.6), 0, 7); ctx.stroke();
+    ctx.fillStyle = COLORS.drop; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(g.name, g.x, g.y + 4); ctx.restore();
+  }
+  // nodes
+  for (const n of nodes.values()) {
+    const s = ease((clock - n.born) / 450), pulse = Math.max(0, 1 - (clock - n.pulse) / 500), r = R * s * (1 + pulse * 0.08);
+    ctx.save();
+    if (pulse > 0) { ctx.shadowColor = COLORS.accent; ctx.shadowBlur = 22 * pulse; }
+    if (clock - n.born < 900) { ctx.shadowColor = "#fff"; ctx.shadowBlur = 20 * (1 - (clock - n.born) / 900); }
+    ctx.fillStyle = "#1a2635"; ctx.strokeStyle = n.name === selected ? "#fff" : COLORS.accent; ctx.lineWidth = n.name === selected ? 3 : 2;
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill(); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = "#e8f0f8"; ctx.font = "600 12px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    let label = n.name; while (label.length > 3 && ctx.measureText(label).width > R * 1.8) label = label.slice(0, -2) + "…";
+    ctx.fillText(label, n.x, n.y); ctx.textBaseline = "alphabetic";
+    const svcs = n.info ? n.info.services : [];
+    ctx.font = "11px system-ui";
+    svcs.slice(0, 6).forEach((sv, i) => {
+      const y = n.y + R + 14 + i * 15, f = Math.max(0, 1 - (clock - (n.flash[sv.name] || -1e9)) / 600), e = Math.max(0, 1 - (clock - (n.flash["!" + sv.name] || -1e9)) / 900);
+      const w = ctx.measureText(sv.name).width + 16;
+      ctx.fillStyle = e > 0 ? `rgba(246,224,94,${0.25 + e * 0.5})` : f > 0 ? `rgba(104,211,145,${0.18 + f * 0.6})` : "#1b2430";
+      ctx.strokeStyle = "#34475a"; ctx.beginPath(); ctx.roundRect(n.x - w / 2, y - 11, w, 14, 5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = f > 0.3 ? "#fff" : "#a9bacb"; ctx.fillText(sv.name, n.x, y);
+    });
+    if (svcs.length > 6) { ctx.fillStyle = "#8696a8"; ctx.fillText("+" + (svcs.length - 6) + " more", n.x, n.y + R + 14 + 6 * 15); }
+  }
+  // packets
+  for (let i = packets.length - 1; i >= 0; i--) {
+    const p = packets[i], t = (clock - p.t0) / p.dur; if (t >= 1) { packets.splice(i, 1); continue; }
+    const a = nodes.get(p.from), b = nodes.get(p.to); if (!a || !b) { if (t > 0.05) packets.splice(i, 1); continue; }
+    const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t, c = COLORS[p.kind] || COLORS.request;
+    ctx.save(); ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.restore();
+  }
+  // drop marks
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const m = marks[i], t = (clock - m.t0) / 900; if (t >= 1) { marks.splice(i, 1); continue; }
+    ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = COLORS.drop; ctx.lineWidth = 3; const s = 7 + t * 8, y = m.y - t * 14;
+    ctx.beginPath(); ctx.moveTo(m.x - s, y - s); ctx.lineTo(m.x + s, y + s); ctx.moveTo(m.x + s, y - s); ctx.lineTo(m.x - s, y + s); ctx.stroke(); ctx.restore();
+  }
+}
+let last = performance.now();
+function frame(now) {
+  const dt = now - last; last = now;
+  if (!S.paused) clock += dt;           // pausing freezes animations too
+  if (!S.paused) physics(dt); else physics(0.0001);
+  draw(); requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------------------------------------------------- mouse interaction
+let drag = null;
+function hit(x, y) { let best = null; for (const n of nodes.values()) if (Math.hypot(n.x - x, n.y - y) <= R + 4) best = n; return best; }
+function pt(e) { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+cv.addEventListener("pointerdown", (e) => {
+  const [x, y] = pt(e), n = hit(x, y);
+  if (n) { drag = n; n.pinned = true; cv.setPointerCapture(e.pointerId); selected = n.name; renderPanel(true); }
+  else { selected = null; renderPanel(true); }
+});
+cv.addEventListener("pointermove", (e) => {
+  const [x, y] = pt(e);
+  if (drag) { drag.x = x; drag.y = y; } else cv.style.cursor = hit(x, y) ? "grab" : "default";
+});
+cv.addEventListener("pointerup", () => { if (drag) { drag.pinned = false; drag = null; } });
+
+// ----------------------------------------------------------------- boot
+refresh(false); connect(); setInterval(() => refresh(false), 1500);
+</script>
+</body>
+</html>
