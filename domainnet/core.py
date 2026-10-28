@@ -32,7 +32,7 @@ from .scheduler import Scheduler
 
 log = logging.getLogger("domainnet")
 
-_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,48}$")
+_NAME_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 
 _AUTO_NAMES = [
     "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
@@ -490,8 +490,8 @@ class Network:
     # ============================================================ internals
     @staticmethod
     def _check_name(name: str) -> None:
-        if not isinstance(name, str) or not _NAME_RE.match(name):
-            raise InvalidName(f"invalid name {name!r}: use 1-48 chars of letters, digits, _ . : -")
+        if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+            raise InvalidName(f"invalid name {name!r}: use letters, digits, _ . : -")
 
     def _get(self, name: str) -> Domain:
         dom = self._domains.get(name)
