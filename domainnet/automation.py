@@ -4,14 +4,28 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
-from .core import DomainNetError, Network
+from .core import DomainNetError, Network, format_target
 
 if TYPE_CHECKING:  # pragma: no cover
     from .control import Controller
 
 log = logging.getLogger("domainnet.automation")
+
+_COMMENT_RE = re.compile(r"(?:^|\s)#(?:\s|$)")
+
+
+def strip_comment(line: str) -> str:
+    """Remove a ``# comment`` and surrounding whitespace.
+
+    A comment starts at a ``#`` that is preceded by whitespace (or starts the
+    line) *and* followed by whitespace (or ends the line). So a URL fragment
+    such as ``https://a.com/page#top`` or a payload like ``#1`` is left intact.
+    """
+    m = _COMMENT_RE.search(line)
+    return (line[: m.start()] if m else line).strip()
 
 
 class _Periodic:
@@ -90,7 +104,7 @@ class TrafficGenerator(_Periodic):
         services = self.net.services_of(dst)
         target = dst
         if services and self._rng.random() < self.service_bias:
-            target = f"{dst}/{self._rng.choice(services)}"
+            target = format_target(dst, self._rng.choice(services))
         self.net.send(src, target, self._rng.choice(list(self.payloads)))
 
 
@@ -188,10 +202,11 @@ class Scenario:
     def from_text(cls, text: str) -> "Scenario":
         steps: List[Tuple[float, str]] = []
         for n, raw in enumerate(text.splitlines(), 1):
-            line = raw.split("#", 1)[0].strip()
+            line = strip_comment(raw)
             if not line:
                 continue
-            head, _, rest = line.partition(" ")
+            parts = line.split(None, 1)
+            head, rest = parts[0], (parts[1] if len(parts) > 1 else "")
             try:
                 t = float(head.lstrip("+"))
             except ValueError:

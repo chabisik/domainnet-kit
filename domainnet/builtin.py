@@ -54,7 +54,7 @@ def install_builtins(net: "Network") -> None:
         def handler(ctx, msg):
             p = msg.payload
             if not (isinstance(p, dict) and "target" in p):
-                return {"error": "payload must look like {'target': 'domain/service', 'payload': ...}"}
+                return {"error": "payload must look like {'target': 'domain<service>', 'payload': ...}"}
             return ctx.call(p["target"], p.get("payload"), timeout=5.0)
         return handler
     reg("gateway", gateway, "Relays {'target','payload'} to another domain's service and returns its answer")

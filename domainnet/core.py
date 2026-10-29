@@ -5,7 +5,7 @@ Concepts
 * **Domain**   – an isolated participant. It owns services and an inbox.
 * **Link**     – an undirected connection between two domains with latency/loss.
 * **Service**  – a named handler deployed *inside* one domain.
-* **Message**  – addressed to ``"domain"`` or ``"domain/service"``; routed hop by
+* **Message**  – addressed to ``"domain"`` or ``"domain<service>"``; routed hop by
   hop over the links that exist *at that moment* (so topology can change while
   messages are in flight).
 
@@ -32,7 +32,11 @@ from .scheduler import Scheduler
 
 log = logging.getLogger("domainnet")
 
-_NAME_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+# Names (domains, services, templates) are free-form: any non-empty string without
+# whitespace, control characters, or the reserved address delimiters '<' and '>'.
+# Those two can never appear unescaped in a URL, so URLs are valid names as-is.
+_NAME_RE = re.compile(r"[^\s<>\x00-\x1f\x7f]+")
+_TARGET_RE = re.compile(r"([^<>]+)<([^<>]+)>")
 
 _AUTO_NAMES = [
     "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
@@ -87,6 +91,41 @@ class CallTimeout(DomainNetError, TimeoutError):
     pass
 
 
+def check_name(name: str) -> None:
+    """Raise :class:`InvalidName` unless ``name`` is a valid domain/service name."""
+    if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+        raise InvalidName(
+            f"invalid name {name!r}: must be non-empty and contain no whitespace, "
+            "control characters, '<' or '>'"
+        )
+
+
+def format_target(domain: str, service: Optional[str] = None) -> str:
+    """Build an address: ``"domain"`` or ``"domain<service>"``."""
+    check_name(domain)
+    if service is None or service == "":
+        return domain
+    check_name(service)
+    return f"{domain}<{service}>"
+
+
+def parse_target(target: str) -> Tuple[str, Optional[str]]:
+    """Split an address into ``(domain, service_or_None)``.
+
+    ``"https://a.com"`` -> ``("https://a.com", None)``;
+    ``"https://a.com<quote>"`` -> ``("https://a.com", "quote")``.
+    The syntax is context-free: it never depends on which domains exist.
+    """
+    if not isinstance(target, str) or not target:
+        raise InvalidName("target must be 'domain' or 'domain<service>'")
+    if "<" not in target and ">" not in target:
+        return target, None
+    m = _TARGET_RE.fullmatch(target)
+    if not m:
+        raise InvalidName(f"bad target {target!r}: expected 'domain' or 'domain<service>'")
+    return m.group(1), m.group(2)
+
+
 # ----------------------------------------------------------------- model ---
 @dataclass
 class Message:
@@ -104,7 +143,7 @@ class Message:
 
     @property
     def target(self) -> str:
-        return f"{self.dst}/{self.service}" if self.service else self.dst
+        return f"{self.dst}<{self.service}>" if self.service else self.dst
 
 
 @dataclass
@@ -390,7 +429,7 @@ class Network:
         with self._lock:
             dom = self._get(domain)
             if name in dom.services and not replace:
-                raise ServiceExists(f"{domain}/{name} already deployed")
+                raise ServiceExists(f"{domain}<{name}> already deployed")
             svc = Service(name, handler, description)
             dom.services[name] = svc
         self.bus.emit("service.deployed", domain=domain, service=name, description=description)
@@ -408,13 +447,13 @@ class Network:
         with self._lock:
             dom = self._get(domain)
             if dom.services.pop(name, None) is None:
-                raise UnknownService(f"{domain}/{name} is not deployed")
+                raise UnknownService(f"{domain}<{name}> is not deployed")
         self.bus.emit("service.removed", domain=domain, service=name)
 
     # ------------------------------------------------------------ messaging
     def send(self, src: str, target: str, payload: Any = None, *, kind: str = "request",
              ttl: Optional[int] = None) -> Message:
-        """Fire-and-forget. ``target`` is ``"domain"`` or ``"domain/service"``.
+        """Fire-and-forget. ``target`` is ``"domain"`` or ``"domain<service>"``.
         If the service returns a value, a reply message is routed back to ``src``."""
         msg = self._make_message(src, target, payload, kind, None, ttl)
         self._dispatch(msg)
@@ -490,8 +529,7 @@ class Network:
     # ============================================================ internals
     @staticmethod
     def _check_name(name: str) -> None:
-        if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
-            raise InvalidName(f"invalid name {name!r}: use letters, digits, _ . : -")
+        check_name(name)
 
     def _get(self, name: str) -> Domain:
         dom = self._domains.get(name)
@@ -533,12 +571,7 @@ class Network:
 
     @staticmethod
     def _parse_target(target: str) -> Tuple[str, Optional[str]]:
-        if not isinstance(target, str) or not target:
-            raise InvalidName("target must be 'domain' or 'domain/service'")
-        dst, _, svc = target.partition("/")
-        if not dst:
-            raise InvalidName(f"bad target {target!r}")
-        return dst, (svc or None)
+        return parse_target(target)
 
     def _make_message(self, src: str, target: str, payload: Any, kind: str,
                       reply_to: Optional[str], ttl: Optional[int], error: bool = False) -> Message:
@@ -644,7 +677,7 @@ class Network:
             result = svc.invoke(ServiceContext(self, dom, msg), msg)
         except Exception as exc:
             svc.errors += 1
-            log.warning("service %s/%s failed: %r", dom.name, svc.name, exc)
+            log.warning("service %s<%s> failed: %r", dom.name, svc.name, exc)
             self.bus.emit("service.error", domain=dom.name, service=svc.name, id=msg.id,
                           error=repr(exc))
             if msg.kind == "request":

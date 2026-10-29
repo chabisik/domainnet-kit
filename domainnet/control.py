@@ -7,8 +7,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Optional
 
-from .automation import Churn, TrafficGenerator
-from .core import DomainNetError, Network
+from .automation import Churn, TrafficGenerator, strip_comment
+from .core import DomainNetError, Network, format_target
 
 HELP = """\
 add [NAME ...]                  create domain(s); no name = auto-named
@@ -17,7 +17,7 @@ link A B [LATENCY_MS] [LOSS]    connect two domains (or update the link)
 unlink A B                      cut the link
 deploy DOMAIN TEMPLATE [as SVC] deploy a service template inside a domain
 undeploy DOMAIN SERVICE         remove a service
-send SRC TARGET [PAYLOAD]       TARGET is 'domain' or 'domain/service'
+send SRC TARGET [PAYLOAD]       TARGET is 'domain' or 'domain<service>' (PAYLOAD may be JSON)
 speed X                         time scale (0.25 slower ... 4 faster)
 pause | resume                  freeze / thaw all in-flight messages
 traffic on [RATE] | off | RATE  random message generator (msgs/second)
@@ -113,7 +113,7 @@ class Controller:
 
     # ---------------------------------------------------------- text form
     def parse_line(self, line: str) -> Optional[Dict[str, Any]]:
-        line = line.split("#", 1)[0].strip()
+        line = strip_comment(line)
         if not line:
             return None
         parts = line.split()
@@ -202,7 +202,9 @@ class Controller:
         self.net.undeploy(_req(c, "domain"), _req(c, "service"))
 
     def _send(self, c: Dict[str, Any]) -> Any:
-        msg = self.net.send(_req(c, "src"), _req(c, "target"), c.get("payload"))
+        # either {"target": "domain<service>"} or the structured {"dst": ..., "service": ...}
+        target = format_target(c["dst"], c.get("service")) if c.get("dst") else _req(c, "target")
+        msg = self.net.send(_req(c, "src"), target, c.get("payload"))
         return {"id": msg.id}
 
     def _speed(self, c: Dict[str, Any]) -> Any:

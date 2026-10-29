@@ -80,7 +80,7 @@ class MessagingTests(Base):
     def test_multi_hop_call_and_reply(self):
         self.chain()
         self.net["c"].deploy("upper", lambda ctx, msg: str(msg.payload).upper())
-        self.assertEqual(self.net.call("a", "c/upper", "hi"), "HI")
+        self.assertEqual(self.net.call("a", "c<upper>", "hi"), "HI")
         hops = [e for e in self.events if e.type == "message.hop"]
         self.assertEqual([(h.data["frm"], h.data["to"]) for h in hops],
                          [("a", "b"), ("b", "c"), ("c", "b"), ("b", "a")])
@@ -93,14 +93,14 @@ class MessagingTests(Base):
             """Doubles a number"""
             return msg.payload * 2
 
-        self.assertEqual(self.net.call("a", "c/twice", 21), 42)
+        self.assertEqual(self.net.call("a", "c<twice>", 21), 42)
         self.assertEqual(self.net["c"].services["twice"].description, "Doubles a number")
 
     def test_service_chaining(self):
         self.chain()
         self.net["c"].deploy("upper", lambda ctx, msg: str(msg.payload).upper())
         self.net.deploy_template("b", "gateway")
-        out = self.net.call("a", "b/gateway", {"target": "c/upper", "payload": "x"})
+        out = self.net.call("a", "b<gateway>", {"target": "c<upper>", "payload": "x"})
         self.assertEqual(out, "X")
 
     def test_no_route_drops_and_fails_call_fast(self):
@@ -108,7 +108,7 @@ class MessagingTests(Base):
         self.net.add_domain("b")
         t0 = time.time()
         with self.assertRaises(DeliveryError):
-            self.net.call("a", "b/x", 1, timeout=5)
+            self.net.call("a", "b<x>", 1, timeout=5)
         self.assertLess(time.time() - t0, 1.0)
         self.assertIn("message.dropped", self.types())
         self.assertEqual(self.net.snapshot()["stats"]["in_flight"], 0)
@@ -116,7 +116,7 @@ class MessagingTests(Base):
     def test_missing_service_dropped(self):
         self.chain()
         with self.assertRaises(DeliveryError):
-            self.net.call("a", "c/nope", 1)
+            self.net.call("a", "c<nope>", 1)
 
     def test_remote_exception(self):
         self.chain()
@@ -125,14 +125,14 @@ class MessagingTests(Base):
             raise ValueError("kaboom")
         self.net["c"].deploy("boom", boom)
         with self.assertRaises(RemoteError):
-            self.net.call("a", "c/boom")
+            self.net.call("a", "c<boom>")
         self.assertIn("service.error", self.types())
 
     def test_timeout_when_service_returns_none(self):
         self.chain()
         self.net["c"].deploy("silent", lambda ctx, msg: None)
         with self.assertRaises(CallTimeout):
-            self.net.call("a", "c/silent", timeout=0.2)
+            self.net.call("a", "c<silent>", timeout=0.2)
 
     def test_event_to_domain_goes_to_inbox_and_hook(self):
         self.chain()
@@ -178,12 +178,12 @@ class MessagingTests(Base):
         self.net.link("a", "b", loss=1.0)
         self.net["b"].deploy("echo", lambda m: m.payload)
         with self.assertRaises(DeliveryError):
-            self.net.call("a", "b/echo", 1)
+            self.net.call("a", "b<echo>", 1)
 
     def test_local_delivery_has_no_hops(self):
         self.net.add_domain("a")
         self.net["a"].deploy("echo", lambda m: m.payload)
-        self.assertEqual(self.net.call("a", "a/echo", 7), 7)
+        self.assertEqual(self.net.call("a", "a<echo>", 7), 7)
         self.assertNotIn("message.hop", self.types())
 
     def test_pause_freezes_inflight_and_resume_delivers(self):
@@ -224,8 +224,8 @@ class ControllerTests(Base):
         for line in ["add a b c", "link a b 20", "link b c 20", "deploy c echo", "deploy c upper as shout"]:
             self.assertTrue(self.ctl.run_line(line)["ok"], line)
         self.assertEqual(sorted(self.net.services_of("c")), ["echo", "shout"])
-        self.assertEqual(self.net.call("a", "c/shout", "yo"), "YO")
-        res = self.ctl.run_line('send a c/echo {"k": 1}')
+        self.assertEqual(self.net.call("a", "c<shout>", "yo"), "YO")
+        res = self.ctl.run_line('send a c<echo> {"k": 1}')
         self.assertTrue(res["ok"])
         self.assertTrue(self.ctl.run_line("rm b")["ok"])
         self.assertEqual(self.net.links(), [])

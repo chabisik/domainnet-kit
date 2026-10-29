@@ -35,14 +35,16 @@ def quote(ctx, msg):
 
 @bank.service("charge", description="charge a card")
 def charge(ctx, msg):
-    return {"ok": msg.payload["amount"] <= 100}
+    # the demo's random traffic also sends plain strings here, so validate the payload
+    amount = msg.payload.get("amount") if isinstance(msg.payload, dict) else None
+    return {"ok": isinstance(amount, (int, float)) and amount <= 100}
 
 
 @shop.service("checkout", description="quote -> charge -> ship (chains calls across domains)")
 def checkout(ctx, msg):
     item = msg.payload
-    price = ctx.call("shop/quote", item)["price"]          # local call
-    paid = ctx.call("bank/charge", {"amount": price})["ok"]   # crosses a link
+    price = ctx.call("shop<quote>", item)["price"]          # local call
+    paid = ctx.call("bank<charge>", {"amount": price})["ok"]   # crosses a link
     if paid:
         ctx.send("courier", {"ship": item}, kind="event")     # fire and forget
     return {"item": item, "paid": paid}
@@ -66,7 +68,7 @@ courier.on_message = lambda msg: logging.info("courier got %r", msg.payload)
 server = DashboardServer(net, ctl, port=8765).start()
 print("dashboard:", server.url)
 
-print("checkout ->", net.call("shop", "shop/checkout", "book"))
+print("checkout ->", net.call("shop", "shop<checkout>", "book"))
 
 ctl.run_line("traffic on 1.5")          # same as the toggle in the UI
 try:

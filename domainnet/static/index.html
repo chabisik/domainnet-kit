@@ -34,7 +34,13 @@
   label.sw { display: flex; align-items: center; gap: 5px; color: var(--muted); }
   #conn { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
   #conn.ok { background: var(--rep); }
-  main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+  :root { --side: 340px; }
+  main { display: grid; grid-template-columns: 1fr 6px var(--side); min-height: 0; }
+  main.collapsed { grid-template-columns: 1fr; }
+  main.collapsed aside, main.collapsed #split { display: none; }
+  #split { cursor: col-resize; background: var(--line); touch-action: none; transition: background .12s; }
+  #split:hover, #split.drag, #split:focus-visible { background: var(--accent); outline: none; }
+  #sidetoggle { position: absolute; top: 10px; right: 10px; z-index: 2; background: rgba(21,28,37,.85); }
   #stage { position: relative; min-width: 0; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   #legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 12px; color: var(--muted);
@@ -42,7 +48,7 @@
   #legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
   #empty { position: absolute; inset: 0; display: none; place-items: center; text-align: center;
     color: var(--muted); pointer-events: none; }
-  aside { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); }
+  aside { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); }
   aside section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
   aside h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
   #selected { overflow: auto; max-height: 46%; }
@@ -54,6 +60,7 @@
   .tag button { border: 0; background: none; padding: 0 4px; color: var(--muted); }
   .tag button:hover { color: var(--bad); }
   .muted { color: var(--muted); }
+  .tag { overflow-wrap: anywhere; max-width: 100%; }
   #console { display: flex; flex-direction: column; gap: 6px; }
   #out { max-height: 90px; overflow: auto; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
   #out .err { color: var(--bad); } #out .ok { color: var(--rep); }
@@ -61,7 +68,12 @@
   #log { flex: 1; overflow: auto; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
   #log div { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .k-struct { color: var(--accent); } .k-drop { color: var(--bad); } .k-deliv { color: var(--rep); } .k-sent { color: var(--req); } .k-err { color: var(--warn); }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } aside { border-left: 0; border-top: 1px solid var(--line); } }
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 55% 45%; }
+    main.collapsed { grid-template-rows: 1fr; }
+    #split { display: none; }
+    aside { border-top: 1px solid var(--line); }
+  }
 </style>
 </head>
 <body>
@@ -104,6 +116,7 @@
   <main>
     <div id="stage">
       <canvas id="cv"></canvas>
+      <button id="sidetoggle" aria-controls="side" aria-expanded="true" title="Show / hide the side panel">Hide ›</button>
       <div id="empty"><div><div style="font-size:16px;color:var(--text)">No domains yet</div>
         <div>Click “+ Domain”, type <code>add</code> in the console, or turn on <b>churn</b>.</div></div></div>
       <div id="legend">
@@ -113,7 +126,8 @@
         <span><i style="background:var(--bad)"></i>dropped</span>
       </div>
     </div>
-    <aside>
+    <div id="split" role="separator" aria-orientation="vertical" aria-label="Resize side panel (drag, arrow keys, double-click to reset)" tabindex="0"></div>
+    <aside id="side">
       <section id="selected"><h2>Selected domain</h2><div id="selbody" class="muted">Click a domain in the graph. Drag to move it.</div></section>
       <section id="console">
         <h2>Console <span class="muted" style="text-transform:none;letter-spacing:0">— type <code>help</code></span></h2>
@@ -142,7 +156,13 @@ let sigPanel = "";
 
 const COLORS = { request: "#63b3ed", reply: "#68d391", event: "#f6ad55", drop: "#fc8181", accent: "#4fd1c5" };
 const $ = (id) => document.getElementById(id);
-const lk = (a, b) => (a < b ? a + "|" + b : b + "|" + a);
+const lk = (a, b) => (a < b ? a + "\u0001" + b : b + "\u0001" + a);  // names never contain control chars
+const tgt = (dom, svc) => (svc ? dom + "<" + svc + ">" : dom);       // address syntax: domain<service>
+// URLs are valid names; draw just the host inside the circle (full name stays in panel/tooltip)
+function shortLabel(name) {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)/i.exec(name);
+  return m && m[1] ? m[1] : name;
+}
 
 // ---------------------------------------------------------------- api
 async function post(body) {
@@ -175,7 +195,7 @@ function applyState(st) {
       const near = st.links.filter((l) => l.a === d.name || l.b === d.name).map((l) => nodes.get(l.a === d.name ? l.b : l.a)).filter(Boolean);
       let x = w / 2 + (Math.random() - .5) * 120, y = h / 2 + (Math.random() - .5) * 120;
       if (near.length) { x = near.reduce((s, m) => s + m.x, 0) / near.length + (Math.random() - .5) * 60; y = near.reduce((s, m) => s + m.y, 0) / near.length + (Math.random() - .5) * 60; }
-      n = { name: d.name, x, y, vx: 0, vy: 0, born: clock, pinned: false, pulse: -1e9, flash: {} };
+      n = { name: d.name, x, y, vx: 0, vy: 0, born: clock, pinned: false, pulse: -1e9, flash: Object.create(null) };
       nodes.set(d.name, n);
     }
     n.info = d;
@@ -240,10 +260,10 @@ function logEvent(ev) {
   const d = ev.data, t = ev.type; let text = null, cls = "";
   const hm = new Date(ev.ts * 1000).toTimeString().slice(0, 8);
   if (t === "message.hop" || t === "net.speed") return;
-  if (t === "message.sent") { text = `${d.src} → ${d.dst}${d.service ? "/" + d.service : ""} ${d.kind === "request" ? "" : "(" + d.kind + ") "}${d.preview}`; cls = "k-sent"; }
-  else if (t === "message.delivered") { text = `✓ ${d.domain}${d.service ? "/" + d.service : ""} ${d.hops} hop${d.hops === 1 ? "" : "s"} ${Math.round(d.latency_ms)}ms`; cls = "k-deliv"; }
+  if (t === "message.sent") { text = `${d.src} → ${tgt(d.dst, d.service)} ${d.kind === "request" ? "" : "(" + d.kind + ") "}${d.preview}`; cls = "k-sent"; }
+  else if (t === "message.delivered") { text = `✓ ${tgt(d.domain, d.service)} ${d.hops} hop${d.hops === 1 ? "" : "s"} ${Math.round(d.latency_ms)}ms`; cls = "k-deliv"; }
   else if (t === "message.dropped") { text = `✗ drop ${d.src}→${d.dst} (${d.reason})`; cls = "k-drop"; }
-  else if (t === "service.error") { text = `! ${d.domain}/${d.service}: ${d.error}`; cls = "k-err"; }
+  else if (t === "service.error") { text = `! ${tgt(d.domain, d.service)}: ${d.error}`; cls = "k-err"; }
   else if (t === "net.paused") { text = d.paused ? "paused" : "resumed"; cls = "k-struct"; }
   else { text = `${t} ${Object.entries(d).filter(([k]) => ["name", "a", "b", "domain", "service", "reason"].includes(k)).map(([, v]) => v).join(" ")}`; cls = "k-struct"; }
   const log = $("log"), row = document.createElement("div");
@@ -267,7 +287,7 @@ function renderPanel(force) {
   if (!force && sig === sigPanel) return; sigPanel = sig;
   body.className = ""; body.replaceChildren();
   if (!d) { body.className = "muted"; body.textContent = "Click a domain in the graph. Drag to move it."; return; }
-  body.append(el("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px" }, d.name));
+  body.append(el("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px;overflow-wrap:anywhere" }, d.name));
   // services
   const svcRow = el("div", { class: "row" }, el("span", { class: "lbl" }, "services"));
   if (!d.services.length) svcRow.append(el("span", { class: "muted" }, "none"));
@@ -295,7 +315,7 @@ function renderPanel(force) {
     el("button", { on: { click: () => lsel.value && cmd({ cmd: "link", a: d.name, b: lsel.value, latency_ms: +lat.value, loss: +loss.value }) } }, "Link")));
   // send
   const targets = [];
-  for (const x of S.domains) { targets.push(x.name); for (const s of x.services) targets.push(x.name + "/" + s.name); }
+  for (const x of S.domains) { targets.push(x.name); for (const s of x.services) targets.push(tgt(x.name, s.name)); }
   const tg = el("select", { "aria-label": "Send to" }, ...targets.filter((t) => t !== d.name).map((t) => el("option", { value: t }, t)));
   const pl = el("input", { placeholder: "payload", value: "hello", "aria-label": "Payload" });
   body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "send"), tg, pl,
@@ -376,7 +396,7 @@ function draw() {
   for (let i = ghosts.length - 1; i >= 0; i--) {
     const g = ghosts[i], t = (clock - g.t0) / 700; if (t >= 1) { ghosts.splice(i, 1); continue; }
     ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = COLORS.drop; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(g.x, g.y, R * (1 + t * 0.6), 0, 7); ctx.stroke();
-    ctx.fillStyle = COLORS.drop; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(g.name, g.x, g.y + 4); ctx.restore();
+    ctx.fillStyle = COLORS.drop; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(shortLabel(g.name), g.x, g.y + 4); ctx.restore();
   }
   // nodes
   for (const n of nodes.values()) {
@@ -387,7 +407,7 @@ function draw() {
     ctx.fillStyle = "#1a2635"; ctx.strokeStyle = n.name === selected ? "#fff" : COLORS.accent; ctx.lineWidth = n.name === selected ? 3 : 2;
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill(); ctx.stroke(); ctx.restore();
     ctx.fillStyle = "#e8f0f8"; ctx.font = "600 12px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    let label = n.name; while (label.length > 3 && ctx.measureText(label).width > R * 1.8) label = label.slice(0, -2) + "…";
+    let label = shortLabel(n.name); while (label.length > 3 && ctx.measureText(label).width > R * 1.8) label = label.slice(0, -2) + "…";
     ctx.fillText(label, n.x, n.y); ctx.textBaseline = "alphabetic";
     const svcs = n.info ? n.info.services : [];
     ctx.font = "11px system-ui";
@@ -434,11 +454,45 @@ cv.addEventListener("pointerdown", (e) => {
 });
 cv.addEventListener("pointermove", (e) => {
   const [x, y] = pt(e);
-  if (drag) { drag.x = x; drag.y = y; } else cv.style.cursor = hit(x, y) ? "grab" : "default";
+  if (drag) { drag.x = x; drag.y = y; }
+  else { const h = hit(x, y); cv.style.cursor = h ? "grab" : "default"; cv.title = h ? h.name : ""; }
 });
 cv.addEventListener("pointerup", () => { if (drag) { drag.pinned = false; drag = null; } });
 
 // ----------------------------------------------------------------- boot
+// ---- resizable / collapsible side panel (width + state remembered per browser)
+const mainEl = document.querySelector("main"), split = $("split"), toggle = $("sidetoggle");
+const SIDE_MIN = 240, SIDE_DEFAULT = 340, GRAPH_MIN = 280;
+let sideW = SIDE_DEFAULT, sideCollapsed = false;
+const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* storage may be blocked */ } };
+const recall = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+function applySide() {
+  sideW = Math.round(Math.min(Math.max(SIDE_MIN, mainEl.clientWidth - GRAPH_MIN), Math.max(SIDE_MIN, sideW)));
+  document.documentElement.style.setProperty("--side", sideW + "px");
+  mainEl.classList.toggle("collapsed", sideCollapsed);
+  toggle.textContent = sideCollapsed ? "‹ Panel" : "Hide ›";
+  toggle.setAttribute("aria-expanded", String(!sideCollapsed));
+  split.setAttribute("aria-valuenow", String(sideW));
+}
+const saveWidth = () => store("domainnet.sideW", String(sideW));
+split.addEventListener("pointerdown", (e) => { split.setPointerCapture(e.pointerId); split.classList.add("drag"); e.preventDefault(); });
+split.addEventListener("pointermove", (e) => {
+  if (!split.hasPointerCapture(e.pointerId)) return;
+  sideW = mainEl.getBoundingClientRect().right - e.clientX - 3; applySide();
+});
+split.addEventListener("pointerup", () => { split.classList.remove("drag"); saveWidth(); });
+split.addEventListener("pointercancel", () => split.classList.remove("drag"));
+split.addEventListener("dblclick", () => { sideW = SIDE_DEFAULT; applySide(); saveWidth(); });
+split.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowLeft") sideW += 24; else if (e.key === "ArrowRight") sideW -= 24; else return;
+  e.preventDefault(); applySide(); saveWidth();
+});
+toggle.onclick = () => { sideCollapsed = !sideCollapsed; applySide(); store("domainnet.sideCollapsed", sideCollapsed ? "1" : "0"); };
+window.addEventListener("resize", applySide);
+{ const w = parseInt(recall("domainnet.sideW"), 10); if (w > 0) sideW = w; }
+sideCollapsed = recall("domainnet.sideCollapsed") === "1";
+applySide();
+
 refresh(false); connect(); setInterval(() => refresh(false), 1500);
 </script>
 </body>

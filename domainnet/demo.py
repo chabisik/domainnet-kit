@@ -20,8 +20,8 @@ DEMO_SCENARIO = """\
 11.2 link echo-dom bravo 100
 11.4 deploy echo-dom dice
 11.6 deploy echo-dom broadcast
-13   send delta bravo/counter hello
-14   send alpha delta/gateway {"target": "charlie/upper", "payload": "routed through two domains"}
+13   send delta bravo<counter> hello
+14   send alpha delta<gateway> {"target": "charlie<upper>", "payload": "routed through two domains"}
 
 20   unlink alpha bravo
 24   link alpha bravo 90
@@ -30,4 +30,10 @@ DEMO_SCENARIO = """\
 30.2 link foxtrot delta 150
 30.4 link foxtrot echo-dom 90
 30.6 deploy foxtrot ping
+
+# names can be URLs
+34   add https://shop.example.com/eu
+34.2 link https://shop.example.com/eu foxtrot 110
+34.4 deploy https://shop.example.com/eu counter
+36   send foxtrot https://shop.example.com/eu<counter> hi
 """

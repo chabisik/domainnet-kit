@@ -20,6 +20,9 @@ from .core import (
     UnknownDomain,
     UnknownService,
     UnknownTemplate,
+    check_name,
+    format_target,
+    parse_target,
 )
 from .events import Event, EventBus
 from .server import DashboardServer
@@ -33,4 +36,5 @@ __all__ = [
     "DomainNetError", "InvalidName", "DomainExists", "UnknownDomain",
     "ServiceExists", "UnknownService", "UnknownTemplate", "LinkError",
     "DeliveryError", "RemoteError", "CallTimeout",
+    "check_name", "format_target", "parse_target",
 ]

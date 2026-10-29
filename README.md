@@ -17,7 +17,7 @@ pip install -e .            # or just add this folder to PYTHONPATH
 python -m domainnet         # built-in demo → open http://127.0.0.1:8765
 python -m domainnet --empty # blank network, build it live
 python -m domainnet --churn 3 --traffic 3   # let it evolve by itself
-python -m unittest discover -s tests        # 27 tests
+python -m unittest discover -s tests        # run the test suite
 ```
 
 ## Concepts
@@ -27,11 +27,35 @@ python -m unittest discover -s tests        # 27 tests
 | **Domain** | An isolated participant: owns services, an inbox, free-form `meta`. |
 | **Link** | Undirected connection with `latency_ms` and `loss` (0–1). |
 | **Service** | A handler deployed *inside* a domain. Return a value → it is sent back as a reply. |
-| **Message** | Addressed to `"domain"` or `"domain/service"`. Routed hop by hop over the links that exist *right now* (lowest total latency), so topology can change mid-flight. |
+| **Message** | Addressed to `"domain"` or `"domain<service>"`. Routed hop by hop over the links that exist *right now* (lowest total latency), so topology can change mid-flight. |
 | **Template** | A named service factory the dashboard / text commands can deploy (`echo`, `counter`, …). |
 
 A message is dropped (and a `message.dropped` event emitted with the reason) on: `no_route`,
 `no_service`, `loss`, `link_removed`, `domain_removed`, `ttl_exceeded`.
+
+## Names and addresses
+
+Domain, service and template **names are free-form**: any non-empty string with no whitespace or
+control characters and no `<` or `>`. No length limit, Unicode is fine, and **URLs work as-is**
+(`https://shop.example.com/eu`, `http://Bank.example.org:8080/v1/?q=1#frag`).
+
+A message **address** is either a domain, or a service inside a domain:
+
+```
+https://shop.example.com/eu            → the domain
+https://shop.example.com/eu<quote>     → service "quote" in that domain
+```
+
+`<` and `>` can never appear unescaped in a URL, so this syntax is unambiguous and never depends on
+which domains exist (`https://a.com` and `https://a.com/x` can coexist). Helpers:
+`parse_target("a<s>") -> ("a", "s")` and `format_target("a", "s") -> "a<s>"`. In JSON commands you
+can also pass the parts separately: `{"cmd": "send", "src": "x", "dst": "https://a.com", "service": "quote"}`.
+
+Notes: quote addresses in a terminal (`<` and `>` are shell redirections); names are used exactly as
+typed (no case or trailing-slash normalization); the old `domain/service` syntax is gone, so `a/b`
+is now simply a domain called `a/b`. In the dashboard a URL domain is drawn with just its host and
+shows the full name on hover and in the side panel. The side panel can be resized (drag the divider, arrow keys when it is focused, double-click to reset) or hidden with the button at the top right of the graph; width and state are remembered in the browser. In console and scenario lines a `#` starts a
+comment only when surrounded by whitespace, so URL fragments (`…/page#top`) are safe.
 
 ## Use it from your project
 
@@ -46,8 +70,8 @@ net.link("shop", "bank", latency_ms=100)
 def charge(ctx, msg):                  # or: def charge(msg)
     return {"ok": msg.payload["amount"] <= 100}
 
-print(shop.call("bank/charge", {"amount": 40}))      # blocking request/reply → {'ok': True}
-shop.send("bank/charge", {"amount": 5})              # fire and forget
+print(shop.call("bank<charge>", {"amount": 40}))     # blocking request/reply → {'ok': True}
+shop.send("bank<charge>", {"amount": 5})             # fire and forget
 net["bank"].deploy("audit", lambda ctx, msg: "ok")   # deploy a service at any time
 net.remove_domain("bank")                            # …or remove a whole domain
 
@@ -84,7 +108,7 @@ link A B [LATENCY_MS] [LOSS]    connect / update a link
 unlink A B
 deploy DOMAIN TEMPLATE [as SVC]
 undeploy DOMAIN SERVICE
-send SRC TARGET [PAYLOAD]       TARGET = domain | domain/service ; PAYLOAD may be JSON
+send SRC TARGET [PAYLOAD]       TARGET = domain | domain<service> ; PAYLOAD may be JSON
 speed X | pause | resume        time scale; pause freezes in-flight messages
 traffic on [RATE] | off | RATE  random messages (msgs/s)
 churn on [SECONDS] | off        random domains/links/services appearing and disappearing
