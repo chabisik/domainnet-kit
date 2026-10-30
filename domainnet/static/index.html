@@ -90,6 +90,7 @@
     </div>
     <div class="group">
       <input id="newname" placeholder="name (optional)" size="14" aria-label="New domain name">
+      <input id="newlabel" placeholder="label (optional)" size="14" aria-label="New domain label">
       <button id="btn-add">+ Domain</button>
     </div>
     <div class="group">
@@ -163,6 +164,13 @@ function shortLabel(name) {
   const m = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)/i.exec(name);
   return m && m[1] ? m[1] : name;
 }
+// What a domain shows in the graph: its label when one is set, otherwise its name (URLs shortened to the host).
+// The name stays the id used by every command; labels are display-only.
+const displayLabel = (info, name) => (info && info.label_set ? info.label : shortLabel(name));
+const domInfo = (name) => S.domains.find((d) => d.name === name);
+const labelOf = (name) => { const d = domInfo(name); return d && d.label_set ? d.label : name; };
+const optText = (d) => (d.label_set ? d.label + " (" + d.name + ")" : d.name);
+const fullTitle = (info, name) => (info && info.label_set ? info.label + " (" + name + ")" : name);
 
 // ---------------------------------------------------------------- api
 async function post(body) {
@@ -184,7 +192,7 @@ function applyState(st) {
   const names = new Set(st.domains.map((d) => d.name));
   // removed domains -> ghosts
   for (const [name, n] of nodes) if (!names.has(name)) {
-    ghosts.push({ x: n.x, y: n.y, name, t0: clock }); nodes.delete(name);
+    ghosts.push({ x: n.x, y: n.y, name, text: displayLabel(n.info, name), t0: clock }); nodes.delete(name);
     if (selected === name) selected = null;
   }
   // added domains
@@ -265,6 +273,7 @@ function logEvent(ev) {
   else if (t === "message.dropped") { text = `✗ drop ${d.src}→${d.dst} (${d.reason})`; cls = "k-drop"; }
   else if (t === "service.error") { text = `! ${tgt(d.domain, d.service)}: ${d.error}`; cls = "k-err"; }
   else if (t === "net.paused") { text = d.paused ? "paused" : "resumed"; cls = "k-struct"; }
+  else if (t === "domain.label") { text = `label ${d.name} → ${d.custom ? d.label : "(reset to name)"}`; cls = "k-struct"; }
   else { text = `${t} ${Object.entries(d).filter(([k]) => ["name", "a", "b", "domain", "service", "reason"].includes(k)).map(([, v]) => v).join(" ")}`; cls = "k-struct"; }
   const log = $("log"), row = document.createElement("div");
   row.className = cls; row.textContent = `${hm}  ${text}`; row.title = row.textContent;
@@ -283,11 +292,18 @@ function el(tag, attrs, ...kids) {
 function renderPanel(force) {
   const body = $("selbody");
   const d = selected && S.domains.find((x) => x.name === selected);
-  const sig = JSON.stringify([selected, d && d.services.map((s) => s.name), S.domains.map((x) => x.name + ":" + x.services.map((s) => s.name)), S.links.map((l) => lk(l.a, l.b) + l.latency), S.templates.map((t) => t.name)]);
+  const sig = JSON.stringify([selected, d && d.services.map((s) => s.name), S.domains.map((x) => x.name + ":" + (x.label_set ? x.label : "") + ":" + x.services.map((s) => s.name)), S.links.map((l) => lk(l.a, l.b) + l.latency), S.templates.map((t) => t.name)]);
   if (!force && sig === sigPanel) return; sigPanel = sig;
   body.className = ""; body.replaceChildren();
   if (!d) { body.className = "muted"; body.textContent = "Click a domain in the graph. Drag to move it."; return; }
-  body.append(el("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px;overflow-wrap:anywhere" }, d.name));
+  body.append(el("div", { style: "font-size:15px;font-weight:600;overflow-wrap:anywhere" }, d.label_set ? d.label : d.name));
+  body.append(el("div", { class: "muted", style: "margin-bottom:6px;overflow-wrap:anywhere" }, d.label_set ? "id: " + d.name : "id = label (no label set)"));
+  // label editor: empty = reset to the name
+  const li = el("input", { placeholder: d.name, value: d.label_set ? d.label : "", "aria-label": "Label" });
+  const setLabel = () => cmd({ cmd: "label", name: d.name, label: li.value.trim() || null });
+  li.addEventListener("keydown", (e) => { if (e.key === "Enter") setLabel(); });
+  body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "label"), li,
+    el("button", { title: "Save the label (leave empty to reset to the name)", on: { click: setLabel } }, "Set")));
   // services
   const svcRow = el("div", { class: "row" }, el("span", { class: "lbl" }, "services"));
   if (!d.services.length) svcRow.append(el("span", { class: "muted" }, "none"));
@@ -304,19 +320,19 @@ function renderPanel(force) {
   const lrow = el("div", { class: "row" }, el("span", { class: "lbl" }, "links"));
   if (!nbs.length) lrow.append(el("span", { class: "muted" }, "none"));
   for (const l of nbs) { const o = l.a === d.name ? l.b : l.a;
-    lrow.append(el("span", { class: "tag", title: `${l.latency_ms} ms, loss ${l.loss}` }, `${o} · ${Math.round(l.latency_ms)}ms`,
+    lrow.append(el("span", { class: "tag", title: `${o} — ${l.latency_ms} ms, loss ${l.loss}` }, `${labelOf(o)} · ${Math.round(l.latency_ms)}ms`,
       el("button", { title: "unlink", "aria-label": "unlink " + o, on: { click: () => cmd({ cmd: "unlink", a: d.name, b: o }) } }, "×"))); }
   body.append(lrow);
   const others = S.domains.filter((x) => x.name !== d.name);
-  const lsel = el("select", { "aria-label": "Link to" }, ...others.map((x) => el("option", { value: x.name }, x.name)));
+  const lsel = el("select", { "aria-label": "Link to" }, ...others.map((x) => el("option", { value: x.name }, optText(x))));
   const lat = el("input", { type: "number", value: "150", min: "0", style: "max-width:64px", "aria-label": "Latency ms" });
   const loss = el("input", { type: "number", value: "0", min: "0", max: "1", step: "0.05", style: "max-width:56px", "aria-label": "Loss 0-1", title: "loss 0..1" });
   body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "link to"), lsel, lat, loss,
     el("button", { on: { click: () => lsel.value && cmd({ cmd: "link", a: d.name, b: lsel.value, latency_ms: +lat.value, loss: +loss.value }) } }, "Link")));
   // send
   const targets = [];
-  for (const x of S.domains) { targets.push(x.name); for (const s of x.services) targets.push(tgt(x.name, s.name)); }
-  const tg = el("select", { "aria-label": "Send to" }, ...targets.filter((t) => t !== d.name).map((t) => el("option", { value: t }, t)));
+  for (const x of S.domains) { targets.push([x.name, optText(x)]); for (const s of x.services) targets.push([tgt(x.name, s.name), optText(x) + "<" + s.name + ">"]); }
+  const tg = el("select", { "aria-label": "Send to" }, ...targets.filter((t) => t[0] !== d.name).map((t) => el("option", { value: t[0] }, t[1])));
   const pl = el("input", { placeholder: "payload", value: "hello", "aria-label": "Payload" });
   body.append(el("div", { class: "row" }, el("span", { class: "lbl" }, "send"), tg, pl,
     el("button", { on: { click: () => tg.value && cmd({ cmd: "send", src: d.name, target: tg.value, payload: pl.value }) } }, "Send")));
@@ -324,8 +340,12 @@ function renderPanel(force) {
 }
 
 // ------------------------------------------------------------- controls
-$("btn-add").onclick = () => { const n = $("newname").value.trim(); cmd(n ? { cmd: "add_domain", name: n } : { cmd: "add_domain" }); $("newname").value = ""; };
-$("newname").onkeydown = (e) => { if (e.key === "Enter") $("btn-add").click(); };
+$("btn-add").onclick = () => {
+  const n = $("newname").value.trim(), lb = $("newlabel").value.trim(), c = { cmd: "add_domain" };
+  if (n) c.name = n; if (lb) c.label = lb;
+  cmd(c).then((r) => { if (r.ok) { $("newname").value = ""; $("newlabel").value = ""; } });
+};
+$("newname").onkeydown = $("newlabel").onkeydown = (e) => { if (e.key === "Enter") $("btn-add").click(); };
 $("btn-pause").onclick = () => cmd({ cmd: S.paused ? "resume" : "pause" });
 $("speed").onchange = (e) => cmd({ cmd: "speed", value: +e.target.value });
 $("traffic").onchange = (e) => cmd({ cmd: "traffic", on: e.target.checked, rate: +$("rate").value });
@@ -373,6 +393,16 @@ function physics(dt) {
     n.x = Math.min(W - 60, Math.max(60, n.x + n.vx * k)); n.y = Math.min(H - 70, Math.max(50, n.y + n.vy * k));
   }
 }
+// Fit text inside a node: one line if it fits, else up to two word-wrapped lines, each ellipsized.
+function fitLabel(text, maxW) {
+  const cut = (s) => { while (s.length > 1 && ctx.measureText(s).width > maxW) s = s.slice(0, -2) + "…"; return s; };
+  if (ctx.measureText(text).width <= maxW) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return [cut(text)];
+  let first = words[0], i = 1;
+  while (i < words.length && ctx.measureText(first + " " + words[i]).width <= maxW) first += " " + words[i++];
+  return i < words.length ? [cut(first), cut(words.slice(i).join(" "))] : [cut(first)];
+}
 const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 function draw() {
   ctx.clearRect(0, 0, W, H);
@@ -396,7 +426,7 @@ function draw() {
   for (let i = ghosts.length - 1; i >= 0; i--) {
     const g = ghosts[i], t = (clock - g.t0) / 700; if (t >= 1) { ghosts.splice(i, 1); continue; }
     ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = COLORS.drop; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(g.x, g.y, R * (1 + t * 0.6), 0, 7); ctx.stroke();
-    ctx.fillStyle = COLORS.drop; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(shortLabel(g.name), g.x, g.y + 4); ctx.restore();
+    ctx.fillStyle = COLORS.drop; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(g.text.length > 12 ? g.text.slice(0, 11) + "…" : g.text, g.x, g.y + 4); ctx.restore();
   }
   // nodes
   for (const n of nodes.values()) {
@@ -406,9 +436,13 @@ function draw() {
     if (clock - n.born < 900) { ctx.shadowColor = "#fff"; ctx.shadowBlur = 20 * (1 - (clock - n.born) / 900); }
     ctx.fillStyle = "#1a2635"; ctx.strokeStyle = n.name === selected ? "#fff" : COLORS.accent; ctx.lineWidth = n.name === selected ? 3 : 2;
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill(); ctx.stroke(); ctx.restore();
-    ctx.fillStyle = "#e8f0f8"; ctx.font = "600 12px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    let label = shortLabel(n.name); while (label.length > 3 && ctx.measureText(label).width > R * 1.8) label = label.slice(0, -2) + "…";
-    ctx.fillText(label, n.x, n.y); ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#e8f0f8"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const text = displayLabel(n.info, n.name);
+    ctx.font = "600 12px system-ui";
+    let lines = fitLabel(text, R * 1.8);
+    if (lines.length > 1) { ctx.font = "600 10.5px system-ui"; lines = fitLabel(text, R * 1.85); }
+    lines.forEach((ln, i) => ctx.fillText(ln, n.x, n.y + (i - (lines.length - 1) / 2) * 12));
+    ctx.textBaseline = "alphabetic";
     const svcs = n.info ? n.info.services : [];
     ctx.font = "11px system-ui";
     svcs.slice(0, 6).forEach((sv, i) => {
@@ -455,7 +489,7 @@ cv.addEventListener("pointerdown", (e) => {
 cv.addEventListener("pointermove", (e) => {
   const [x, y] = pt(e);
   if (drag) { drag.x = x; drag.y = y; }
-  else { const h = hit(x, y); cv.style.cursor = h ? "grab" : "default"; cv.title = h ? h.name : ""; }
+  else { const h = hit(x, y); cv.style.cursor = h ? "grab" : "default"; cv.title = h ? fullTitle(h.info, h.name) : ""; }
 });
 cv.addEventListener("pointerup", () => { if (drag) { drag.pinned = false; drag = null; } });
 

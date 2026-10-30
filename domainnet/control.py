@@ -12,6 +12,7 @@ from .core import DomainNetError, Network, format_target
 
 HELP = """\
 add [NAME ...]                  create domain(s); no name = auto-named
+label NAME [TEXT]               set the dashboard label of a domain (no TEXT = reset to name)
 rm NAME                         remove a domain (its links and services go too)
 link A B [LATENCY_MS] [LOSS]    connect two domains (or update the link)
 unlink A B                      cut the link
@@ -64,6 +65,7 @@ class Controller:
         self.churn = Churn(net, seed=seed)
         self._commands: Dict[str, Callable[[Dict[str, Any]], Any]] = {
             "add_domain": self._add_domain,
+            "label": self._label,
             "remove_domain": self._remove_domain,
             "link": self._link,
             "unlink": self._unlink,
@@ -125,6 +127,17 @@ class Controller:
 
         if op in ("add", "+"):
             return {"cmd": "add_domain", "names": args}
+        if op == "label":
+            need(1, 'label NAME [TEXT]   (TEXT may be a JSON string, e.g. "Shop EU")')
+            parts = line.split(None, 2)
+            text = parts[2].strip() if len(parts) > 2 else ""
+            if text.startswith('"'):
+                try:
+                    decoded = json.loads(text)
+                    text = decoded if isinstance(decoded, str) else text
+                except ValueError:
+                    pass  # not valid JSON: use the text as typed
+            return {"cmd": "label", "name": args[0], "label": text or None}
         if op in ("rm", "remove", "del", "-"):
             need(1, "rm NAME")
             return {"cmd": "remove_domain", "name": args[0]}
@@ -181,8 +194,13 @@ class Controller:
             names.append(c["name"])
         if not names:
             names = [None]
-        created = [self.net.add_domain(n, **(c.get("meta") or {})).name for n in names]
+        label = c.get("label")
+        created = [self.net.add_domain(n, label, **(c.get("meta") or {})).name for n in names]
         return {"created": created}
+
+    def _label(self, c: Dict[str, Any]) -> Any:
+        # {"cmd": "label", "name": "x", "label": "Shop EU"}; null / "" resets to the name
+        return {"label": self.net.set_label(_req(c, "name"), c.get("label"))}
 
     def _remove_domain(self, c: Dict[str, Any]) -> Any:
         self.net.remove_domain(_req(c, "name"))

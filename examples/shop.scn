@@ -1,0 +1,28 @@
+# A small scenario you can run straight from the CLI:
+#
+#     python -m domainnet --scenario examples/shop.scn
+#
+# Format: <seconds>  <command>.  Times count from the start of the run and follow
+# net.pause().  Commands are exactly the dashboard console commands (try "help").
+# A '#' starts a comment only when it is surrounded by whitespace, so URL fragments
+# (https://x.org/p#top) are safe.
+
+0     add https://shop.example.com https://bank.example.org courier
+0     label https://shop.example.com "Online shop"          # the name stays the id
+0     label https://bank.example.org "Bank (EU)"
+0     deploy https://bank.example.org counter as accounts
+0     deploy courier upper
+0.4   link https://shop.example.com https://bank.example.org 120
+0.8   link https://shop.example.com courier 200
+2     traffic on 2
+
+5     add warehouse
+5.2   label warehouse "Warehouse \u0023 2"                  # JSON string: \u0023 stands for a literal hash sign
+5.3   link warehouse courier 90
+5.4   deploy warehouse echo
+7     send https://shop.example.com warehouse<echo> {"order": 42}
+8     send https://shop.example.com https://bank.example.org<accounts> "charge"
+
+12    unlink https://shop.example.com courier
+14    label https://shop.example.com                         # no text = back to the name
+16    rm courier

@@ -64,7 +64,7 @@ class NameRules(unittest.TestCase):
         self.assertEqual(len(self.net.domain_names()), 9)
 
     def test_rejected_names(self):
-        for bad in ["a b", "a\tb", "a\nb", "a\x00b", "a<b", "a>b", "a b", "a b"]:
+        for bad in ["a b", "a\tb", "a\nb", "a\x00b", "a<b", "a>b", "a\u00a0b", "a\u2003b"]:
             with self.assertRaises(InvalidName, msg=repr(bad)):
                 self.net.add_domain(bad)
         with self.assertRaises(InvalidName):

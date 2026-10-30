@@ -25,13 +25,14 @@ from .core import (
     parse_target,
 )
 from .events import Event, EventBus
+from .recorder import Recorder
 from .server import DashboardServer
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Network", "Domain", "Service", "ServiceContext", "Message", "Link",
-    "Controller", "DashboardServer", "TrafficGenerator", "Churn", "Scenario",
+    "Controller", "DashboardServer", "TrafficGenerator", "Churn", "Scenario", "Recorder",
     "Event", "EventBus",
     "DomainNetError", "InvalidName", "DomainExists", "UnknownDomain",
     "ServiceExists", "UnknownService", "UnknownTemplate", "LinkError",

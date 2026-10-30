@@ -3,6 +3,8 @@
 DEMO_SCENARIO = """\
 # t(s)  command
 0    add alpha bravo charlie
+0    label alpha "Edge gateway"
+0    label bravo "Billing"
 0    deploy alpha echo
 0    deploy bravo counter
 0    deploy charlie upper

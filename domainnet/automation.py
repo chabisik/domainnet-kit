@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+import threading
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
 from .core import DomainNetError, Network, format_target
@@ -195,8 +196,36 @@ class Scenario:
 
     def __init__(self, steps: Sequence[Tuple[float, str]]) -> None:
         self.steps = sorted(((float(t), line) for t, line in steps), key=lambda s: s[0])
+        self.errors: List[Tuple[float, str, str]] = []   # (time, line, message) of failed steps
+        self.finished = threading.Event()                # set after the last step ran (or cancel())
         self._handles: List[int] = []
         self._net: Optional[Network] = None
+        self._remaining = 0
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self.steps)
+
+    def __repr__(self) -> str:
+        return f"Scenario({len(self.steps)} steps, {self.duration:.1f}s)"
+
+    @property
+    def duration(self) -> float:
+        """Time of the last step, in seconds."""
+        return self.steps[-1][0] if self.steps else 0.0
+
+    def to_text(self) -> str:
+        """Serialize to the text format read by :meth:`from_text` (lossless round trip)."""
+        return "".join(f"{t:.3f}  {line}\n" for t, line in self.steps)
+
+    def save(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(self.to_text())
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """Block until every step has run (or :meth:`cancel` was called). Returns False on
+        timeout. Remember that time follows ``net.pause()``: a paused network never finishes."""
+        return self.finished.wait(timeout)
 
     @classmethod
     def from_text(cls, text: str) -> "Scenario":
@@ -221,20 +250,33 @@ class Scenario:
         with open(path, "r", encoding="utf-8") as fh:
             return cls.from_text(fh.read())
 
-    def start(self, controller: "Controller") -> None:
+    def start(self, controller: "Controller") -> "Scenario":
         self.cancel()
         self._net = controller.net
+        self.errors = []
+        with self._lock:
+            self._remaining = len(self.steps)
+        self.finished.clear()
+        if not self.steps:
+            self.finished.set()
         for t, line in self.steps:
-            self._handles.append(controller.net.scheduler.call_later(t, self._run, controller, line))
+            self._handles.append(
+                controller.net.scheduler.call_later(t, self._run_step, controller, t, line))
+        return self
 
     def cancel(self) -> None:
         if self._net is not None:
             for h in self._handles:
                 self._net.scheduler.cancel(h)
         self._handles = []
+        self.finished.set()
 
-    @staticmethod
-    def _run(controller: "Controller", line: str) -> None:
+    def _run_step(self, controller: "Controller", t: float, line: str) -> None:
         res = controller.run_line(line)
         if not res.get("ok"):
             log.warning("scenario step %r failed: %s", line, res.get("error"))
+            self.errors.append((t, line, str(res.get("error"))))
+        with self._lock:
+            self._remaining -= 1
+            if self._remaining <= 0:
+                self.finished.set()

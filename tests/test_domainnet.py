@@ -180,6 +180,18 @@ class MessagingTests(Base):
         with self.assertRaises(DeliveryError):
             self.net.call("a", "b<echo>", 1)
 
+    def test_close_fails_pending_calls_immediately(self):
+        net = Network(default_latency_ms=2000)
+        for n in "ab":
+            net.add_domain(n)
+        net.link("a", "b")
+        net["b"].deploy("echo", lambda m: m.payload)
+        threading.Timer(0.2, net.close).start()
+        t0 = time.time()
+        with self.assertRaises(DeliveryError):
+            net.call("a", "b<echo>", 1, timeout=10)
+        self.assertLess(time.time() - t0, 2.0)
+
     def test_local_delivery_has_no_hops(self):
         self.net.add_domain("a")
         self.net["a"].deploy("echo", lambda m: m.payload)

@@ -91,6 +91,25 @@ class CallTimeout(DomainNetError, TimeoutError):
     pass
 
 
+_LABEL_BAD = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
+
+
+def normalize_label(label: Any) -> Optional[str]:
+    """``None`` / empty / whitespace-only -> ``None`` (= "not set", falls back to the
+    name). Otherwise the stripped text. Labels are display-only: spaces, URLs and
+    any Unicode are fine, but they must be single-line."""
+    if label is None:
+        return None
+    if not isinstance(label, str):
+        raise InvalidName(f"label must be text, got {type(label).__name__}")
+    label = label.strip()
+    if not label:
+        return None
+    if _LABEL_BAD.search(label):
+        raise InvalidName("label must be a single line (no control characters)")
+    return label
+
+
 def check_name(name: str) -> None:
     """Raise :class:`InvalidName` unless ``name`` is a valid domain/service name."""
     if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
@@ -181,10 +200,12 @@ class Service:
     value to send a reply back to the caller.
     """
 
-    def __init__(self, name: str, handler: Callable[..., Any], description: str = "") -> None:
+    def __init__(self, name: str, handler: Callable[..., Any], description: str = "",
+                 template: Optional[str] = None) -> None:
         self.name = name
         self.handler = handler
         self.description = description
+        self.template = template  # set when deployed from a registered template (replayable)
         self.calls = 0
         self.errors = 0
         self._arity = _arity(handler)
@@ -198,10 +219,25 @@ class Domain:
         self.net = net
         self.name = name
         self.meta = dict(meta)
+        self._label: Optional[str] = None
         self.services: Dict[str, Service] = {}
         self.inbox: Deque[Message] = deque(maxlen=100)
         self.on_message: Optional[Callable[[Message], None]] = None
         self.received = 0
+
+    @property
+    def label(self) -> str:
+        """Display text shown in the dashboard. Defaults to :attr:`name` (the
+        immutable id). Assigning ``None`` or ``""`` resets it."""
+        return self._label if self._label is not None else self.name
+
+    @label.setter
+    def label(self, value: Optional[str]) -> None:
+        self.net.set_label(self.name, value)
+
+    @property
+    def has_label(self) -> bool:
+        return self._label is not None
 
     # convenience wrappers -------------------------------------------------
     def deploy(self, name: str, handler: Callable[..., Any], description: str = "",
@@ -285,6 +321,7 @@ class Network:
         self._links: Dict[Tuple[str, str], Link] = {}
         self._adj: Dict[str, Dict[str, Link]] = {}
         self._pending: Dict[str, Future] = {}
+        self._tls = threading.local()  # marks "this thread is running a service handler"
         self._rng = random.Random(seed)
         self._msg_ids = itertools.count(1)
         self._name_idx = itertools.count(0)
@@ -298,7 +335,15 @@ class Network:
 
     # ----------------------------------------------------------- lifecycle
     def close(self) -> None:
+        """Stop the network. Blocking ``call()``s still waiting for a reply fail right away
+        with :class:`DeliveryError` instead of hanging until their timeout."""
         self.scheduler.close()
+        with self._lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for fut in pending:
+            if not fut.done():
+                fut.set_exception(DeliveryError("network closed"))
         self._pool.shutdown(wait=False, cancel_futures=True)
 
     def __enter__(self) -> "Network":
@@ -325,17 +370,36 @@ class Network:
                 if name not in self._domains:
                     return name
 
-    def add_domain(self, name: Optional[str] = None, **meta: Any) -> Domain:
+    def add_domain(self, name: Optional[str] = None, label: Optional[str] = None,
+                   **meta: Any) -> Domain:
+        """Create a domain. ``name`` is its immutable id; ``label`` is optional display
+        text (defaults to the name). Extra keyword arguments are stored as ``meta``."""
+        new_label = normalize_label(label)
         with self._lock:
             name = name or self.suggest_name()
             self._check_name(name)
             if name in self._domains:
                 raise DomainExists(f"domain {name!r} already exists")
             dom = Domain(self, name, meta)
+            dom._label = new_label
             self._domains[name] = dom
             self._adj[name] = {}
-        self.bus.emit("domain.added", name=name, meta=dom.meta)
+        self.bus.emit("domain.added", name=name, meta=dom.meta, label=dom.label,
+                      custom=dom.has_label)
         return dom
+
+    def set_label(self, name: str, label: Optional[str]) -> str:
+        """Set the display label of a domain; ``None`` or ``""`` resets it to the name.
+        Returns the effective label."""
+        new_label = normalize_label(label)
+        with self._lock:
+            dom = self._get(name)
+            changed = dom._label != new_label
+            dom._label = new_label
+            effective = dom.label
+        if changed:
+            self.bus.emit("domain.label", name=name, label=effective, custom=new_label is not None)
+        return effective
 
     def remove_domain(self, name: str) -> None:
         with self._lock:
@@ -424,15 +488,17 @@ class Network:
 
     # ------------------------------------------------------------- services
     def deploy(self, domain: str, name: str, handler: Callable[..., Any],
-               description: str = "", replace: bool = False) -> Service:
+               description: str = "", replace: bool = False,
+               template: Optional[str] = None) -> Service:
         self._check_name(name)
         with self._lock:
             dom = self._get(domain)
             if name in dom.services and not replace:
                 raise ServiceExists(f"{domain}<{name}> already deployed")
-            svc = Service(name, handler, description)
+            svc = Service(name, handler, description, template)
             dom.services[name] = svc
-        self.bus.emit("service.deployed", domain=domain, service=name, description=description)
+        self.bus.emit("service.deployed", domain=domain, service=name, description=description,
+                      template=template)
         return svc
 
     def deploy_template(self, domain: str, template: str, name: Optional[str] = None,
@@ -441,7 +507,8 @@ class Network:
         if tmpl is None:
             raise UnknownTemplate(f"unknown template {template!r} (have: {', '.join(sorted(self.templates)) or 'none'})")
         dom = self.domain(domain)
-        return self.deploy(domain, name or template, tmpl.factory(dom), tmpl.description, replace)
+        return self.deploy(domain, name or template, tmpl.factory(dom), tmpl.description, replace,
+                           template=template)
 
     def undeploy(self, domain: str, name: str) -> None:
         with self._lock:
@@ -508,10 +575,12 @@ class Network:
                     {
                         "name": d.name,
                         "meta": d.meta,
+                        "label": d.label,
+                        "label_set": d.has_label,
                         "received": d.received,
                         "services": [
                             {"name": s.name, "description": s.description,
-                             "calls": s.calls, "errors": s.errors}
+                             "template": s.template, "calls": s.calls, "errors": s.errors}
                             for s in d.services.values()
                         ],
                     }
@@ -587,8 +656,13 @@ class Network:
         with self._lock:
             self._stats["sent"] += 1
             self._stats["in_flight"] += 1
+        # origin tells the recorder which messages must be replayed ("external": sent by user
+        # code, the traffic generator, the console...) and which a replayed service will
+        # regenerate by itself ("service": sent from inside a service handler).
+        origin = "service" if getattr(self._tls, "depth", 0) > 0 else "external"
         self.bus.emit("message.sent", id=msg.id, src=msg.src, dst=msg.dst, service=msg.service,
-                      kind=msg.kind, preview=_preview(msg.payload))
+                      kind=msg.kind, preview=_preview(msg.payload), payload=msg.payload,
+                      origin=origin)
         self._forward(msg, msg.src)
 
     def _forward(self, msg: Message, at: str) -> None:
@@ -673,6 +747,7 @@ class Network:
 
     def _run_service(self, dom: Domain, svc: Service, msg: Message) -> None:
         svc.calls += 1
+        self._tls.depth = getattr(self._tls, "depth", 0) + 1
         try:
             result = svc.invoke(ServiceContext(self, dom, msg), msg)
         except Exception as exc:
@@ -683,6 +758,8 @@ class Network:
             if msg.kind == "request":
                 self._reply(dom, msg, {"error": str(exc) or repr(exc)}, error=True)
             return
+        finally:
+            self._tls.depth -= 1
         if result is not None and msg.kind == "request":
             self._reply(dom, msg, result)
 
